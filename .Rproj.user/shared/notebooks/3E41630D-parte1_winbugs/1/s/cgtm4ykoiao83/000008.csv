@@ -1,0 +1,5 @@
+"0","# Vecindad"
+"0","aragon.nb <- poly2nb(aragon)"
+"0","vecinos <- nb2WB(aragon.nb)"
+"0",""
+"0","plot(aragon, col = paleta[findInterval(vecinos$num, seq(from = 1, to = 29, by = 4))])"

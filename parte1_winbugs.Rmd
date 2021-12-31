@@ -1,0 +1,301 @@
+---
+title: "Cartografia de enfermedades"
+author: "Soulaiman KACHA y Miguel TERUEL COLL"
+subtitle: "Winbugs"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    highlight: pygments
+    fig_caption: no
+    df_print: kable
+    toc: yes
+    toc_depth: 2
+    number_sections: yes
+    self_contained: yes
+    code_download: yes
+  #pdf_document:
+  #  toc: yes
+  #  toc_depth: '2'
+---
+
+```{r chunk_setup, echo = FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  comment = "",
+  fig.align = "center",
+  fig.show = "hold",
+ #fig.height = 4,
+ #fig.width = 8,
+  out.width = "120%"
+)
+```
+
+```{r options_setup, echo = FALSE}
+options(scipen = 999) #- para quitar la notacion cientifica
+```
+
+
+```{r librerias}
+library(rgdal)
+library(spdep)
+library(R2WinBUGS)
+library(forestmangr)
+library(tidyverse)
+library(broom)
+library(sp)
+library(SpatialEpi)
+library(maptools)
+library(spdep)
+library(sf)
+library(RColorBrewer)
+library(classInt)
+library(ggmap)
+library(RgoogleMaps)
+library(cshapes)
+library(dplyr)
+library(leaflet)
+library(GGally)
+library(INLA)
+library(styler)
+library(tictoc)
+```
+
+
+
+\newpage 
+
+
+
+# Introducción
+
+La cardiopatía isquémica, o enfermedad de las arterias coronarias, es una enfermedad provocada por el estrechamiento de las arterias que van al corazón. Este problema ocasiona que llegue un menor flujo de sangre al corazón y cause un desequilibrio en el aporte de oxígeno al miocardio (tejido muscular del corazón).
+
+En este caso se quiere estudiar la distribución de la mortalidad por enfermedades isquémicas en los hombres de la comunidad de Aragón. Para ello se disponen de los datos sobre mortalidad por dicha enfermedad durante el periodo 1991-2000. También se dispone de la cartografía de la comunidad de Aragón.
+
+Lo primero será explorar y ordenar los datos para un mejor entendimiento de la mortalidad por enfermedades isquémicas en la comunidad de Aragón.
+
+
+```{r}
+load("./datos/Aragon.Rdata")
+aragon <- readOGR("./datos", "aragon")
+aragon <- aragon[order(aragon$CODMUNI), ]
+aragon@data$RME <- Aragon.df$O / Aragon.df$E
+aragon@data$O <- Aragon.df$O
+head(aragon@data)[1:12]
+```
+
+Aquí se presentan tres gráficas. Las dos primeras son de los casos observados y los casos esperados por cada provincia de Aragon.Se aprecia como en ciertos Municipios los casos observados son mayores que los esperados en las zonas centrales, mientras que en zonas del norte y el este, los observados son menores que los esperados.
+El tercer gráfico presenta la Razón  de mortalidad estandarizada por cada uno de los municipios. 
+Se hace este tipo de representación, ya que si solo tenemos en cuenta los datos observados, las comunidades autónomas con poblaciones mayores tendrán mayor número de casos.
+
+Nos interesa la RME ya que así tendremos una idea de cómo se comportan los riesgos de mortalidad independientemente de la población de cada Municipio.
+
+
+```{r}
+paleta <- colorRampPalette(c("blue", "Yellow", "Orange", "Red"))(8)
+
+par(mfrow = c(1, 2))
+
+plot(aragon, col = paleta[findInterval(Aragon.df$O, c(0, 1, 5, 10, 20, 50, 100, 1073))])
+title("Casos de Observados")
+legend("bottomright", 
+       c("0", "1", "5", "10", "20", "50", "100", "1000"), 
+       fill = paleta, 
+       pch = 1, 
+       cex = .7)
+
+plot(aragon, col = paleta[findInterval(Aragon.df$E, c(0, 1, 5, 10, 20, 50, 100, 1105))])
+title("Casos de Esperados")
+legend("bottomright", 
+       c("0", "1", "5", "10", "20", "50", "100", "1000"), 
+       fill = paleta, 
+       pch = 1, 
+       cex = .7)
+
+par(mfrow = c(1, 1))
+
+plot(aragon, col = paleta[findInterval(aragon@data$RME, c(0, 0.5, 1, 1.5, 2, 3, 5, 7))])
+title("Riesgo de mortalidad esperado")
+legend("bottomright",
+       c("0", "0.5", "1", "1.5", "2", "3", "5", "7"), 
+       fill = paleta, 
+       pch = 1, 
+       title = "Índice de Riesgo")
+```
+
+
+Como podemos observar en estas dos tablas, si ordenamos los casos solo teniendo en cuenta los casos observados, las ciudades grandes como Zaragoza, Huesca y Teruel, presentan un alto numero de casos. Sin embargo esto puede inducir a error, ya que el riesgo en estas ciudades no es tan alto, como podemos ver en la siguiente tabla.
+
+```{r}
+tabla1 <- aragon[order(aragon$O, decreasing = TRUE), ]
+head(tabla1@data[, c("NOMBRE", "O")])
+```
+
+
+Sin embargo la realidad es que el riesgo de morir por enfermedades isquémicas es mayor en municipios como Castejón de las Armas, Abejuela y Yasero.
+
+```{r}
+tabla2 <- aragon[order(aragon$RME, decreasing = TRUE), ]
+head(tabla2@data[, c("NOMBRE", "RME")])
+```
+
+Por esto, aunque la razón de mortalidad estandarizada nos da una idea de cómo funcionan las defunciones por enfermedades isquémicas independientemente de la población de cada municipio, presenta un problema en los municipios con pocos habitantes, ya que en estos, cada caso observado, dispara la RME. (1 entre 100 es mayor que 100 entre 1000000) 
+
+Para solventar el problema con los RME en áreas pequeñas nos disponemos a realizar un modelo jerárquico bayesiano, para mejorar la estimación de los RME, incluyendo información, que suavize los RME extremos en áreas pequeñas.
+
+
+# Modelando
+
+Después de hacer una inspección visual y numérica, nos disponemos a desarrollar un modelo, el cual recoja el número de casos observados como variable respuesta. El modelo jerárquico nos permite también incluir la dependencia espacial, y la heterogeneidad de los datos.
+
+Esta es una herramienta muy potente, tanto para incluir información en el modelo, como para dar distribuciones previas a los datos que limiten los rangos numéricos que puedan tomar dichos datos.
+
+Lo primero será crear una relación de vecindad que recoja la dependencia espacial de cada municipio respecto  a los que tiene a su alrededor. Asumimos que lo que vamos a observar en un municipio debe ser parecido a lo observado en municipios colindantes (dependencia espacial).
+
+También incluiremos el municipio como factor aleatorio, ya que cada municipio se comporta en cierta manera de forma única, pese a la dependencia espacial con otros municipios.
+
+
+```{r}
+# Vecindad
+aragon.nb <- poly2nb(aragon)
+vecinos <- nb2WB(aragon.nb)
+
+plot(aragon, col = paleta[findInterval(vecinos$num, seq(from = 1, to = 29, by = 4))])
+title("Número de vecinos")
+legend("bottomright", vecinos$num, seq(from = 1, to = 29, by = 4), fill = paleta, pch = 1, title = "Vecinos")
+```
+
+Ya tenemos creada la matriz de vecindad, la cual genera una correlación entre vecinos. Esta correlación va disminuyendo a medida que los vecinos se encuentran más lejos unos de otros. La gráfica solo muestra el número de vecinos de primer orden que tiene cada municipio.
+
+
+```{r class.source = 'fold-show'}
+set.seed(1)
+
+
+# Bayes
+
+model <- function() {
+  for (i in 1:n) {
+    O[i] ~ dpois(mu[i])
+    log(mu[i]) <- log(E[i]) + m + het[i] + sp[i]
+    het[i] ~ dnorm(0, prechet)
+    R[i] <- exp(m + het[i] + sp[i])
+  }
+  for (i in 1:n) {
+    p.r[i] <- step(R[i] - 1)
+  }
+
+  sp[1:n] ~ car.normal(adj[], w[], num[], precsp)
+  m ~ dflat()
+  prechet <- pow(sdhet, -2)
+  precsp <- pow(sdsp, -2)
+  sdhet ~ dunif(0, 10)
+  sdsp ~ dunif(0, 10)
+
+  # dist predictiva
+  for (i in 1:n) {
+    y.pred[i] ~ dpois(mu[i])
+    res[i] <- y.pred[i] - O[i]
+    p.res[i] <- step(res[i])
+    p.y[i] <- step(y.pred[i])
+  }
+}
+
+
+datos <- list(
+  O = Aragon.df$O,
+  E = Aragon.df$E,
+  n = 729,
+  adj = vecinos$adj,
+  w = vecinos$weights,
+  num = vecinos$num
+)
+
+iniciales <- function() {
+  list(m = rnorm(1), 
+       het = rnorm(729, 0, 0.1), 
+       sp = rnorm(729, 0, 0.1), 
+       sdhet = runif(1, 0, 1), 
+       sdsp = runif(1, 0, 1), 
+       y.pred = rpois(729, mean(Aragon.df$O)))
+}
+param <- c("R", "m", "het", "sp", "sdhet", "sdsp", "p.r", "p.res", "y.pred", "p.y")
+
+
+tic("Modelo Winbugs")
+mod <- bugs(
+  data = datos,
+  inits = iniciales,
+  parameters = param,
+  model = model,
+  n.iter = 2000, 
+  n.burnin = 200, 
+  n.thin = 3
+  #, debug=TRUE
+)
+toc()
+
+
+(mod$DIC)
+```
+
+
+
+# Resultados
+
+## Razon de mortalidad suavizada
+
+Una vez hemos desarrollado el modelo podemos representar las razones de mortalidad estimadas. Tal y como podemos ver en la representación gráfica, incluir una componente espacial y el efecto aleatorio de cada municipio, ajusta de forma más suave la razón de mortalidad.
+Como se puede apreciar, las razones de mortalidad más elevadas se encuentran en la parte central de Aragón, sobre todo en los municipios de los extremos tanto por la parte central oeste como por la parte central este.
+
+
+```{r}
+aragon$media <- mod$mean$R
+spplot(aragon, c("media"), main = "Posteriori de la RME")
+```
+
+
+
+## Probabilidad de RME suavizada
+
+También se ha calculado la probabilidad de que el RME suavizado sea mayor que 1. En este caso si la probabilidad toma valores cercanos a 1 nos indica que los valores observados son mayores que los esperados y por tanto el riesgo de mortalidad es mayor en esos municipios.
+
+
+```{r}
+summary(mod$mean$p.r)
+aragon$p.R <- mod$mean$p.r
+spplot(aragon,
+  c("p.R"),
+  main = paste("Probabilidadad de RME >1", sep = "")
+)
+```
+
+
+## Desviacion tipica del RME suavizado
+
+En este caso se han representado las desviaciones típicas del modelo. Esta representación da una idea sobre el ajuste del modelo. Las zonas con un sd bajo nos indican que el ajuste en ese municipio es bueno, mientras que valores más altos de sd indican una mayor incertidumbre en el modelo y por tanto la fiabilidad del ajuste para ese municipio es menor. También se aprecia que donde hay más incertidumbre es en los municipios pequeños. Esto tiene mucho sentido ya que en estos al tener poca población, con tener pocos casos la razón de mortalidad se dispara. Este modelo intenta corregir este problema, pero no es perfecto.
+
+
+```{r}
+aragon$sdR <- mod$sd$R
+spplot(aragon,
+  c("sdR"),
+  main = paste("Desviacion tipica de la RME", sep = "")
+)
+```
+
+# Conclusiones
+
+
+Como reflexión final, y teniendo en cuenta todos los mapas, podríamos decir que si hay que implementar medidas para la prevención o tratamiento de enfermedades isquemicas en Aragón, las zonas de máxima prioridad serán los municipios del centro Noroeste, ya que presentan RME altas con altas probabilidades de riesgo.
+
+Hemos visto cómo los valores observados no son un buen indicativo para medir la intervención, ya que son datos brutos y obviamente donde haya más población habrá más observados.
+
+En segundo lugar se ha comprobado que la razón de mortalidad da una visión más realista de la realidad.
+
+Finalmente vemos que al incluir en el modelo la dependencia espacial, el efecto aleatorio de cada municipio y el suavizado de la función CAR obtenemos un modelo final que se acerca lo suficientemente bien a la realidad para poder intervenir de forma coherente.
+
+<div style="margin-bottom:400px;">
+</div>

@@ -1,0 +1,5 @@
+"0","veci <- poly2nb(aragon)"
+"0","nb2INLA(""datos/ar.graph"", veci)"
+"0",""
+"0","H <- inla.read.graph(filename = ""datos/ar.graph"")"
+"0","image(inla.graph2matrix(H), xlab = """", ylab = """")"

@@ -1,0 +1,39 @@
+"1","
+"
+"1","Expected number of effective parameters(stdev): "
+"1",""
+"1","47.75"
+"1",""
+"1","("
+"1",""
+"1","17.38"
+"1",""
+"1",")
+"
+"1","Number of equivalent replicates :"
+"1"," "
+"1","15.27"
+"1"," "
+"1","
+
+"
+"1","Deviance Information Criterion (DIC) ...............: 1899.14
+Deviance Information Criterion (DIC, saturated) ....: 827.20
+Effective number of parameters .....................: 50.86
+
+"
+"1","Watanabe-Akaike information criterion (WAIC) ...: 1904.04
+Effective number of parameters .................: 50.21
+
+"
+"1","Marginal log-Likelihood:  -1246.55 
+"
+"1","CPO and PIT are computed
+
+"
+"1","Posterior marginals for the linear predictor and
+"
+"1"," "
+"1","the fitted values are computed
+
+"

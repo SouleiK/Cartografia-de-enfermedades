@@ -1,0 +1,204 @@
+---
+title: "Cartografia de enfermedades"
+author: "Soulaiman KACHA y Miguel TERUEL COLL"
+subtitle: "INLA y Reproducibilidad"
+output:
+ # pdf_document: 
+ #   toc: yes
+ #   toc_depth: 2
+ #   latex_engine: xelatex
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    highlight: pygments
+    fig_caption: no
+    df_print: kable
+    toc: yes
+    toc_depth: 2
+    number_sections: yes
+    self_contained: yes
+    code_download: yes
+---
+
+```{r chunk_setup, echo = FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  comment = "",
+  fig.align = "center",
+  fig.show = "hold",
+  #fig.height = 4,
+  #fig.width = 8,
+  out.width = "120%"
+)
+```
+
+```{r options_setup, echo = FALSE}
+options(scipen = 999) #- para quitar la notacion cientifica
+```
+
+
+```{r librerias}
+library(rgdal)
+library(spdep)
+library(R2WinBUGS)
+library(forestmangr)
+library(tidyverse)
+library(broom)
+library(sp)
+library(SpatialEpi)
+library(maptools)
+library(sf)
+library(RColorBrewer)
+library(classInt)
+library(ggmap)
+library(RgoogleMaps)
+library(cshapes)
+library(dplyr)
+library(leaflet)
+library(GGally)
+library(INLA)
+library(scales)
+library(splancs)
+library(lattice)
+library(fields)
+library(plotKML)
+library(raster)
+library(viridis)
+library(gridExtra)
+library(Rgraphviz)
+library(graph)
+library(styler)
+library(tictoc)
+```
+
+
+
+\newpage 
+
+
+# Modelización con INLA
+
+## Introducción
+
+En las conclusiones de la primera parte del trabajo comentábamos como al incluir en el modelo jerárquico la dependencia espacial, el efecto aleatorio por municipio y el suavizado con la función CAR obteníamos un modelo verosímil. Pero la propia virtud de los métodos de aproximación por MCMC, que es su versatilidad, nos hace encontrarnos con el problema principal de este tipo de modelos, que es el tiempo de computación.
+
+En concreto nuestro modelo con WinBUGS ha necesitado entre 150 y 250 segundos para completarse. Contando con que este modelo es sencillo como ejemplo de clase, es fácil imaginarse lo rápido que escala el consumo de tiempo de procesado de los métodos MCMC (WinBUGS, JAGS, OpenBUGS).
+
+Para aquellos modelos que pueden incluirse en la categoría de _Latent Gaussian Models_ existe una alternativa rápida, la aproximación por INLA ( _Integrated Nested Laplace Approximation_ ).
+
+
+```{r}
+load("./datos/Aragon.Rdata")
+aragon <- readOGR("./datos", "aragon")
+aragon <- aragon[order(aragon$CODMUNI), ]
+Aragon.df$RME <- Aragon.df$O / Aragon.df$E
+aragon@data$RME <- Aragon.df$O / Aragon.df$E
+aragon@data$O <- Aragon.df$O
+```
+
+
+## Modelando
+
+Al igual que con los modelos para WinBUGS, el primer paso es establecer la dependencia espacial mediante la creacion de una red de vecindad, una matriz de ID para tener en cuenta el efecto aleatorio del municipio, establecemos la fórmula que usaremos en el modelo y lo lanzamos:
+
+```{r}
+veci <- poly2nb(aragon)
+nb2INLA("datos/ar.graph", veci)
+
+H <- inla.read.graph(filename = "datos/ar.graph")
+image(inla.graph2matrix(H), xlab = "", ylab = "")
+plot(H)
+
+
+```
+
+```{r class.source = 'fold-show'}
+S <- U <- seq(1, 729)
+Aragon.df <- cbind(Aragon.df, S, U)
+
+formula <- O ~ 1 + f(S,
+  model = "besag",
+  graph = H,
+  scale.model = TRUE,
+  hyper =
+    list(prec = list(prior = "loggamma", param = c(1, 0.001)))
+) +
+  f(U,
+    model = "iid",
+    hyper =
+      list(prec = list(prior = "loggamma", param = c(1, 0.001)))
+  )
+
+tic("Modelo INLA")
+model <- inla(formula,
+  family = "poisson",
+  data = Aragon.df,
+  E = E,
+  control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE),
+  control.predictor = list(compute = TRUE, cdf = c(log(1)))
+)
+toc()
+summary(model)
+```
+
+
+## Resultados
+
+Observamos como mediante aproximación con INLA, obtenemos valores muy similares de la distribución a posteriori para la media del RME, y ligeramente inferiores para su SD, todo esto con la ventaja añadida de que el modelo apenas ha necesitado unos 4 segundos para completarse.
+
+```{r}
+aragon$RMEmean <- round(model$summary.fitted.values$mean, 4)
+aragon$RMEsd <- round(model$summary.fitted.values$sd, 5)
+
+grid.arrange(
+  spplot(aragon, c("RMEmean"),
+    main = c("Posteriori de RME"),
+    colorkey = list(space = "bottom", space = "bottom"),
+    par.settings =
+      list(axis.line = list(
+        col = "transparent",
+        legend.ticks = "black"
+      ))
+  ),
+  spplot(aragon, c("RMEsd"),
+    main = c("SD de la RME"),
+    colorkey = list(space = "bottom", space = "bottom"),
+    par.settings =
+      list(axis.line = list(
+        col = "transparent",
+        legend.ticks = "black"
+      ))
+  ),
+  ncol = 2
+)
+```
+
+
+# Replicabilidad y Reproducibilidad
+
+Por último, con el objetivo de que esta práctica sea totalmente Replicable y Reproducible, hemos llevado a cabo una serie protocolos:
+
+Hemos enmarcado toda la tarea en un proyecto de RStudio con el que facilitar el trabajo cooperativo tanto entre nosotros, como con los posibles investigadores que quisieran replicarlo (o corregirlo).
+
+El código de todos los pasos seguidos en la tarea es completamente accesible en los documentos HTML, mediante la integración con ventanas colapsables.
+
+Además este codigo está escrito en un archivo _.Rmd_ para que cada sección, cada decisión y cada paso queden perfectamente explicados.
+
+Y para facilitar la corrección, el codigo se ha estructurado con la librería _styler_ y se ha redactado siguiendo la guía de sintaxis del _tidyverse_:
+
+* Nombres de archivos en minúscula y sin caracteres especiales.
+* Estructura interna clara y dividida.
+* Espacios tras comas.
+* Paréntesis y claves correctamente estructurados.
+* Lineas de código cortas y diáfanas.
+* Uso de "<-" como símbolo de asignación.
+* No utilización de ";" para alinear comandos en una misma linea.
+* Uso de TRUE/FALSE en vez de T/F.
+* Uso de rutas relativas.
+
+
+
+
+<div style="margin-bottom:400px;">
+</div>

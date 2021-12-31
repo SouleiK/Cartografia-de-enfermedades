@@ -1,0 +1,2 @@
+"0","tabla1 <- aragon[order(aragon$O, decreasing = TRUE), ]"
+"0","head(tabla1@data[, c(""NOMBRE"", ""O"")])"

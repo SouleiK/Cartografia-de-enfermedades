@@ -1,0 +1,4 @@
+"0","head(aragon@data)
+"
+"2","Error in head(aragon@data) : object 'aragon' not found
+"

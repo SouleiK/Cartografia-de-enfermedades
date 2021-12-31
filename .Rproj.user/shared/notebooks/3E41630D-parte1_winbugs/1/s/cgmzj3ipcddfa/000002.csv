@@ -1,0 +1,2 @@
+"0","tabla2 <- aragon[order(aragon$RME, decreasing = TRUE), ]"
+"0","head(tabla2@data[, c(""NOMBRE"", ""RME"")])"

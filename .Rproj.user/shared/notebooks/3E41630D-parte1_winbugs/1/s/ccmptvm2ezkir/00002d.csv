@@ -1,0 +1,2 @@
+"0",""
+"0","plot(aragon, col = paleta[findInterval(aragon@data$RME, c(0, 0.5, 1, 1.5, 2, 3, 5, 7))])"

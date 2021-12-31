@@ -1,0 +1,1 @@
+"0","legend(""bottomright"", vecinos$num, seq(from = 1, to = 29, by = 4), fill = paleta, pch = 1, title = ""Vecinos"")"
